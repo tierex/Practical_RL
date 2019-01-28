@@ -219,7 +219,7 @@ for i in trange(100000):
     if i % 500 == 0:
         if i % 2500 == 0:
             rewards_history.append(np.mean(evaluate(agent, env, n_games=3)))
-        print('mean reward', rewards_history[-1])
+            print('mean reward', rewards_history[-1])
 
 
 env_monitor = gym.wrappers.Monitor(env, directory="kungfu_videos", force=True)
