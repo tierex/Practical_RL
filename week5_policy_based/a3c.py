@@ -8,6 +8,8 @@ import numpy as np
 import os
 
 import gym
+from tqdm import trange
+
 from atari_util import PreprocessAtari
 
 def make_env():
@@ -105,12 +107,6 @@ import os
 
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
-state = [env.reset()]
-logits, value = agent.step(state)
-print("action logits:\n", logits)
-print("state values:\n", value)
-
-
 class EnvBatch:
     def __init__(self, n_envs=10):
         """ Creates n_envs environments and babysits them for ya' """
@@ -196,20 +192,6 @@ critic_loss = tf.reduce_mean((state_values - tf.stop_gradient(target_state_value
 train_step = tf.train.AdamOptimizer(1e-4).minimize(actor_loss + critic_loss)
 sess.run(tf.global_variables_initializer())
 
-
-# Sanity checks to catch some errors. Specific to KungFuMaster in assignment's default setup.
-l_act, l_crit, adv, ent = sess.run([actor_loss, critic_loss, advantage, entropy], feed_dict = {
-        states_ph: batch_states,
-        actions_ph: batch_actions,
-        next_states_ph: batch_states,
-        rewards_ph: batch_rewards,
-        is_done_ph: batch_done,
-    })
-
-assert abs(l_act) < 100 and abs(l_crit) < 100, "losses seem abnormally large"
-assert 0 <= ent.mean() <= np.log(n_actions), "impossible entropy value, double-check the formula pls"
-if ent.mean() < np.log(n_actions) / 2: print("Entropy is too low for untrained agent")
-print("You just might be fine!")
 
 env_batch = EnvBatch(10)
 batch_states = env_batch.reset()
