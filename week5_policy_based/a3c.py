@@ -154,7 +154,93 @@ def evaluate(agent, env, n_games=1):
     return game_rewards
 
 
-env_monitor = gym.wrappers.Monitor(env, directory="sample_kungfu_videos", force=True)
-rw = evaluate(agent, env_monitor, n_games=3,)
+# These placeholders mean exactly the same as in "Let's try it out" section above
+states_ph = tf.placeholder('float32', [None,] + list(obs_shape))
+next_states_ph = tf.placeholder('float32', [None,] + list(obs_shape))
+actions_ph = tf.placeholder('int32', (None,))
+rewards_ph = tf.placeholder('float32', (None,))
+is_done_ph = tf.placeholder('float32', (None,))
+
+
+# logits[n_envs, n_actions] and state_values[n_envs, n_actions]
+logits, state_values = agent.symbolic_step(states_ph)
+next_logits, next_state_values = agent.symbolic_step(next_states_ph)
+next_state_values = next_state_values * (1 - is_done_ph)
+
+# probabilities and log-probabilities for all actions
+probs = tf.nn.softmax(logits)            # [n_envs, n_actions]
+logprobs = tf.nn.log_softmax(logits)     # [n_envs, n_actions]
+
+# log-probabilities only for agent's chosen actions
+logp_actions = tf.reduce_sum(logprobs * tf.one_hot(actions_ph, n_actions), axis=-1) # [n_envs,]
+
+
+# compute advantage using rewards_ph, state_values and next_state_values
+gamma = 0.99
+advantage = rewards_ph + gamma*next_state_values - state_values
+
+assert advantage.shape.ndims == 1, "please compute advantage for each sample, vector of shape [n_envs,]"
+
+# compute policy entropy given logits_seq. Mind the "-" sign!
+entropy = -tf.reduce_sum(probs * logprobs, 1, name="entropy")
+
+assert entropy.shape.ndims == 1, "please compute pointwise entropy vector of shape [n_envs,] "
+
+actor_loss =  - tf.reduce_mean(logp_actions * tf.stop_gradient(advantage)) - 0.001 * tf.reduce_mean(entropy)
+
+# compute target state values using temporal difference formula. Use rewards_ph and next_step_values
+target_state_values = rewards_ph+gamma*next_state_values
+
+critic_loss = tf.reduce_mean((state_values - tf.stop_gradient(target_state_values))**2 )
+
+train_step = tf.train.AdamOptimizer(1e-4).minimize(actor_loss + critic_loss)
+sess.run(tf.global_variables_initializer())
+
+
+# Sanity checks to catch some errors. Specific to KungFuMaster in assignment's default setup.
+l_act, l_crit, adv, ent = sess.run([actor_loss, critic_loss, advantage, entropy], feed_dict = {
+        states_ph: batch_states,
+        actions_ph: batch_actions,
+        next_states_ph: batch_states,
+        rewards_ph: batch_rewards,
+        is_done_ph: batch_done,
+    })
+
+assert abs(l_act) < 100 and abs(l_crit) < 100, "losses seem abnormally large"
+assert 0 <= ent.mean() <= np.log(n_actions), "impossible entropy value, double-check the formula pls"
+if ent.mean() < np.log(n_actions) / 2: print("Entropy is too low for untrained agent")
+print("You just might be fine!")
+
+env_batch = EnvBatch(10)
+batch_states = env_batch.reset()
+
+rewards_history = []
+entropy_history = []
+
+for i in trange(100000):
+
+    batch_actions = agent.sample_actions(agent.step(batch_states))
+    batch_next_states, batch_rewards, batch_done, _ = env_batch.step(batch_actions)
+
+    feed_dict = {
+        states_ph: batch_states,
+        actions_ph: batch_actions,
+        next_states_ph: batch_next_states,
+        rewards_ph: batch_rewards,
+        is_done_ph: batch_done,
+    }
+    batch_states = batch_next_states
+
+    _, ent_t = sess.run([train_step, entropy], feed_dict)
+    entropy_history.append(np.mean(ent_t))
+
+    if i % 500 == 0:
+        if i % 2500 == 0:
+            rewards_history.append(np.mean(evaluate(agent, env, n_games=3)))
+        print('mean reward', rewards_history[-1])
+
+
+env_monitor = gym.wrappers.Monitor(env, directory="kungfu_videos", force=True)
+final_rewards = evaluate(agent, env_monitor, n_games=5,)
 env_monitor.close()
-print (rw)
+print("Final mean reward:", np.mean(final_rewards))
